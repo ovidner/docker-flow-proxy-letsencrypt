@@ -1,4 +1,6 @@
+import random
 import subprocess
+import time
 
 import logging
 logger = logging.getLogger('letsencrypt')
@@ -58,20 +60,32 @@ class CertbotClient():
         if self.challenge == 'dns':
             c = "--manual --manual-public-ip-logging-ok --preferred-challenges dns --manual-auth-hook {} --manual-cleanup-hook {}".format(self.manual_auth_hook, self.manual_cleanup_hook)
 
-        output, error, code = self.run("""certbot certonly \
-                    --agree-tos \
-                    --domains {domains} \
-                    --email {email} \
-                    --expand \
-                    --noninteractive \
-                    {challenge}
-                    --debug \
-                    {options}""".format(
-                        domains=','.join(domains),
-                        email=email,
-                        webroot_path=self.webroot_path,
-                        options=self.get_options(testing=testing),
-                        challenge=c).split())
+        for attempt in range(16):
+            output, error, code = self.run("""certbot certonly \
+                        --agree-tos \
+                        --domains {domains} \
+                        --email {email} \
+                        --expand \
+                        --noninteractive \
+                        {challenge}
+                        --debug \
+                        {options}""".format(
+                            domains=','.join(domains),
+                            email=email,
+                            webroot_path=self.webroot_path,
+                            options=self.get_options(testing=testing),
+                            challenge=c).split())
+
+            if b'Another instance of Certbot is already running.' in error:
+                # We might run in threaded mode and must handle this
+                # gracefully. Here we utilize an exponential backoff
+                # scheme inspired by the one used in Ethernet
+                # (https://en.wikipedia.org/wiki/Exponential_backoff).
+                sleep_secs = 0.1 * random.randint(0, 2 ** attempt)
+                logger.debug('Certbot is already running. Trying again in {} seconds.'.format(sleep_secs))
+                time.sleep(sleep_secs)
+            else:
+                break
 
         ret_error = False
         ret_created = True
